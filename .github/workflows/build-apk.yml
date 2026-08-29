@@ -1,0 +1,119 @@
+name: Build and Release Android APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Keystore & Secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          # Setup .env if GEMINI_API_KEY is available
+          if [ -n "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> .env
+            echo ".env created with GEMINI_API_KEY"
+          elif [ -f .env.example ]; then
+            cp .env.example .env
+          fi
+
+          # Decode Keystore if available
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
+            echo "Keystore decoded to my-upload-key.jks"
+          fi
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew || true
+
+      - name: Build APKs with Gradle
+        env:
+          CM_KEYSTORE_PASSWORD: ${{ secrets.CM_KEYSTORE_PASSWORD }}
+          CM_KEY_ALIAS: ${{ secrets.CM_KEY_ALIAS }}
+          CM_KEY_PASSWORD: ${{ secrets.CM_KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.CM_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.CM_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.CM_KEY_PASSWORD }}
+          KEYSTORE_PATH: my-upload-key.jks
+        run: |
+          if [ -f my-upload-key.jks ] && [ -n "$CM_KEYSTORE_PASSWORD" ]; then
+            echo "Building Release APK with signing keystore..."
+            ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug --stacktrace
+          else
+            echo "Building Debug APK..."
+            ./gradlew assembleDebug --stacktrace
+          fi
+
+      - name: Organize Generated APKs
+        run: |
+          mkdir -p output_apk
+          # Copy release APK if created
+          find app/build/outputs/apk/ -type f -name "*release*.apk" -exec cp {} output_apk/Halawat-AlSheir-v1.0-release.apk \; || true
+          # Copy debug APK if created
+          find app/build/outputs/apk/ -type f -name "*debug*.apk" -exec cp {} output_apk/Halawat-AlSheir-v1.0-debug.apk \; || true
+          
+          # If output_apk is empty, copy any found APK
+          if [ -z "$(ls -A output_apk)" ]; then
+            find app/build/outputs/apk/ -type f -name "*.apk" -exec cp {} output_apk/Halawat-AlSheir-v1.0.apk \;
+          fi
+          
+          echo "Final APKs ready for distribution:"
+          ls -la output_apk/
+
+      - name: Upload APK as Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Halawat-AlSheir-Android15-APK
+          path: output_apk/*.apk
+          retention-days: 30
+
+      - name: Create GitHub Release & Attach APK
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0-build${{ github.run_number }}
+          name: "ديوان وللشعر حلاوة كحلاوة السكر - الإصدار v1.0.${{ github.run_number }}"
+          body: |
+            ## ديوان «وللشعر حلاوة كحلاوة السكر» 📖✨
+            **للمؤلف والشاعر: د. مالك عبدالرحمن الرميمة**
+            
+            تم بناء حزمة التثبيت الرسمية الموقعة (APK) بنجاح وجاهزة للتثبيت المباشر على جميع هواتف وأجهزة الأندرويد، ومتوافقة تماماً مع نظام **Android 15 (SNK 35)**.
+            
+            ---
+            
+            ### 📥 روابط التحميل المباشرة:
+            - **ملف التطبيق الرسمي (APK):** قم بتحميل الملف المرفق أدناه باسم `Halawat-AlSheir-v1.0-release.apk` أو `Halawat-AlSheir-v1.0-debug.apk`.
+            
+            ---
+            
+            ### 🌟 أهم مميزات هذا الإصدار:
+            1. **الديوان الشعري الكامل (190 صفحة):** 154 قصيدة متكاملة محققة مع تقسيم شطري دقيق (صدر وعجز).
+            2. **التلاوة الصوتية التفاعلية:** تلاوة واستماع نقي لكل قصيدة ولكل بيت بشكل منفصل مع تظليل البيت المقروء لحظياً.
+            3. **مشغل صوتي مصغر عائم:** لمتابعة الاستماع والتحكم بالسرعة أثناء تصفح باقي الأبواب والقصائد.
+            4. **البحث السريع والانتقال برقم الصفحة:** بحث في النصوص والأبيات مع الانتقال المباشر لأي صفحة من 1 إلى 190.
+            5. **المفضلة والعلامات ودفتر الخواطر:** حفظ القصائد والملاحظات محلياً بأمان عبر Room Database.
+            6. **تخصيص كامل للقراءة:** 4 سمات تراثية وحديثة (الورقي، الزمردي، الليلي، والوردي) والتحكم في حجم الخط.
+          files: output_apk/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true

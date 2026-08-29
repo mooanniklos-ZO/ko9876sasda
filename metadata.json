@@ -1,0 +1,6 @@
+{
+  "name": "وللشعر حلاوة كحلاوة السكر",
+  "description": "تطبيق ديوان كتاب وللشعر حلاوة كحلاوة السكر للدكتور مالك عبدالرحمن الرميمة مع القراءة والبحث والمفضلة والاستماع الصوتي والتخصيص",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
