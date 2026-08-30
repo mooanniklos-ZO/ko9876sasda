@@ -24,7 +24,9 @@ android {
                 storeFile = rootProject.file(keystorePath)
                 storePassword = System.getenv("CM_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("CM_KEY_ALIAS")
-                keyPassword = System.getenv("CM_KEY_PASSWORD")
+                // Some PKCS12 keystores reject non-ASCII key passwords on Java/AGP.
+                // The repository's signing configuration uses the keystore password for the key entry.
+                keyPassword = System.getenv("CM_KEYSTORE_PASSWORD")
             }
         }
     }
