@@ -38,14 +38,13 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set -euo pipefail
-          echo "Preparing environment configuration..."
           if [ -n "$GEMINI_API_KEY" ]; then
             printf 'GEMINI_API_KEY=%s\n' "$GEMINI_API_KEY" > .env
           elif [ -f .env.example ]; then
             cp .env.example .env
           fi
           if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "ERROR: KEYSTORE_BASE64 secret is required for a real signed release APK."
+            echo "ERROR: KEYSTORE_BASE64 is required for a real signed release APK."
             exit 1
           fi
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
@@ -94,13 +93,10 @@ jobs:
           tag_name: v1.0.0-build${{ github.run_number }}
           name: "ديوان وللشعر حلاوة كحلاوة السكر - الإصدار v1.0.${{ github.run_number }}"
           body: |
-            ## ديوان «وللشعر حلاوة كحلاوة السكر» 📖✨
+            ## ديوان «وللشعر حلاوة كحلاوة السكر»
             **للمؤلف والشاعر: د. مالك عبدالرحمن الرميمة**
 
-            تم بناء حزمة التثبيت الرسمية الموقعة (APK) من مصدر المشروع نفسه.
-
-            ### 📥 تحميل التطبيق
-            حمّل الملف **Halawat-AlSheir-v1.0-release.apk** من أصول هذا الإصدار.
+            تم بناء حزمة Release APK موقعة من مصدر المشروع نفسه.
           files: output_apk/Halawat-AlSheir-v1.0-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
