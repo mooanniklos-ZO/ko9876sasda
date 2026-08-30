@@ -24,9 +24,7 @@ android {
                 storeFile = rootProject.file(keystorePath)
                 storePassword = System.getenv("CM_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("CM_KEY_ALIAS")
-                // Some PKCS12 keystores reject non-ASCII key passwords on Java/AGP.
-                // The repository's signing configuration uses the keystore password for the key entry.
-                keyPassword = System.getenv("CM_KEYSTORE_PASSWORD")
+                keyPassword = System.getenv("CM_KEY_PASSWORD")
             }
         }
     }
@@ -47,13 +45,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    buildFeatures { compose = true }
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+    kotlin {
+        jvmToolchain(17)
     }
+
+    buildFeatures { compose = true }
 }
 
 dependencies {
