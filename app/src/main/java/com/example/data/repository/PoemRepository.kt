@@ -1,6 +1,5 @@
 package com.example.data.repository
 
-import androidx.room.withTransaction
 import com.example.data.local.UserPoemDao
 import com.example.data.local.UserPoemEntity
 import com.example.data.model.Poem
@@ -32,13 +31,14 @@ class PoemRepository(private val dao: UserPoemDao) {
             val localPoems = PoemBatch1.poems + PoemBatch2.poems + PoemBatch3.poems + PoemBatch4.poems
             emit(localPoems.filter {
                 it.title.contains(query, ignoreCase = true) ||
-                    it.content.contains(query, ignoreCase = true)
+                    it.fullTextForSearch.contains(query, ignoreCase = true)
             })
         }
     }
 
     private suspend fun ensureMeta(poemId: Int): UserPoemEntity {
-        return dao.getUserMetaDirect(poemId) ?: UserPoemEntity(poemId = poemId).also { dao.insertOrUpdate(it) }
+        return dao.getUserMetaDirect(poemId)
+            ?: UserPoemEntity(poemId = poemId).also { dao.insertOrUpdate(it) }
     }
 
     suspend fun toggleFavorite(poemId: Int, currentlyFavorite: Boolean) {
