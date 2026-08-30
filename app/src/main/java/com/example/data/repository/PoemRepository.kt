@@ -1,38 +1,63 @@
 package com.example.data.repository
 
+import androidx.room.withTransaction
+import com.example.data.local.UserPoemDao
+import com.example.data.local.UserPoemEntity
 import com.example.data.model.Poem
 import com.example.data.remote.RetrofitClient
 import com.example.data.poems.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 
-class PoemRepository {
+class PoemRepository(private val dao: UserPoemDao) {
 
-    // دالة جلب القصائد من الموقع مع إمكانية استخدام البيانات المحلية كاحتياطي
+    val userMetaMap: Flow<Map<Int, UserPoemEntity>> =
+        dao.getAllUserMeta().map { list -> list.associateBy { it.poemId } }
+
+    val latestBookmark: Flow<UserPoemEntity?> = dao.getLatestBookmark()
+
     fun getPoems(): Flow<List<Poem>> = flow {
         try {
-            // محاولة الجلب من الموقع أولاً
-            val remotePoems = RetrofitClient.apiService.getPoemsFromWebsite()
-            emit(remotePoems)
-        } catch (e: Exception) {
-            // في حال عدم وجود إنترنت أو فشل الموقع، جلب البيانات المحلية القديمة
-            val localPoems = PoemBatch1.poems + PoemBatch2.poems + PoemBatch3.poems + PoemBatch4.poems
-            emit(localPoems)
+            emit(RetrofitClient.apiService.getPoemsFromWebsite())
+        } catch (_: Exception) {
+            emit(PoemBatch1.poems + PoemBatch2.poems + PoemBatch3.poems + PoemBatch4.poems)
         }
     }
 
-    // دالة البحث عبر الموقع
     fun searchPoems(query: String): Flow<List<Poem>> = flow {
         try {
-            val results = RetrofitClient.apiService.searchPoemsOnWebsite(query)
-            emit(results)
-        } catch (e: Exception) {
+            emit(RetrofitClient.apiService.searchPoemsOnWebsite(query))
+        } catch (_: Exception) {
             val localPoems = PoemBatch1.poems + PoemBatch2.poems + PoemBatch3.poems + PoemBatch4.poems
-            val filtered = localPoems.filter { 
-                it.title.contains(query, ignoreCase = true) || 
-                it.content.contains(query, ignoreCase = true) 
-            }
-            emit(filtered)
+            emit(localPoems.filter {
+                it.title.contains(query, ignoreCase = true) ||
+                    it.content.contains(query, ignoreCase = true)
+            })
         }
+    }
+
+    private suspend fun ensureMeta(poemId: Int): UserPoemEntity {
+        return dao.getUserMetaDirect(poemId) ?: UserPoemEntity(poemId = poemId).also { dao.insertOrUpdate(it) }
+    }
+
+    suspend fun toggleFavorite(poemId: Int, currentlyFavorite: Boolean) {
+        ensureMeta(poemId)
+        dao.setFavorite(poemId, !currentlyFavorite)
+    }
+
+    suspend fun toggleBookmark(poemId: Int, currentlyBookmarked: Boolean) {
+        ensureMeta(poemId)
+        dao.setBookmarked(poemId, !currentlyBookmarked)
+    }
+
+    suspend fun saveNote(poemId: Int, note: String) {
+        ensureMeta(poemId)
+        dao.updateNote(poemId, note)
+    }
+
+    suspend fun markAsRead(poemId: Int) {
+        ensureMeta(poemId)
+        dao.recordRead(poemId, System.currentTimeMillis())
     }
 }
