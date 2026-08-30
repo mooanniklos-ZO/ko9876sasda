@@ -26,6 +26,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -37,23 +39,17 @@ jobs:
         run: |
           set -euo pipefail
           echo "Preparing environment configuration..."
-
           if [ -n "$GEMINI_API_KEY" ]; then
             printf 'GEMINI_API_KEY=%s\n' "$GEMINI_API_KEY" > .env
-            echo "Successfully configured .env with GEMINI_API_KEY."
           elif [ -f .env.example ]; then
             cp .env.example .env
-            echo "Copied .env.example to .env."
           fi
-
           if [ -z "$KEYSTORE_BASE64" ]; then
             echo "ERROR: KEYSTORE_BASE64 secret is required for a real signed release APK."
             exit 1
           fi
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
           test -s my-upload-key.jks
-          echo "Successfully decoded signing keystore."
-
           chmod +x gradlew
 
       - name: Build Signed Release APK
@@ -67,7 +63,6 @@ jobs:
           test -n "$CM_KEYSTORE_PASSWORD"
           test -n "$CM_KEY_ALIAS"
           test -n "$CM_KEY_PASSWORD"
-          echo "Building the real signed Release APK..."
           ./gradlew --no-daemon clean assembleRelease --stacktrace
 
       - name: Verify Release APK
@@ -75,7 +70,6 @@ jobs:
           set -euo pipefail
           apk="app/build/outputs/apk/release/app-release.apk"
           test -s "$apk"
-          echo "Verified Release APK: $apk"
           ls -lh "$apk"
 
       - name: Package APK
@@ -84,7 +78,6 @@ jobs:
           mkdir -p output_apk
           cp app/build/outputs/apk/release/app-release.apk output_apk/Halawat-AlSheir-v1.0-release.apk
           test -s output_apk/Halawat-AlSheir-v1.0-release.apk
-          ls -lh output_apk/Halawat-AlSheir-v1.0-release.apk
 
       - name: Upload Signed APK Artifact
         uses: actions/upload-artifact@v4
@@ -108,14 +101,6 @@ jobs:
 
             ### 📥 تحميل التطبيق
             حمّل الملف **Halawat-AlSheir-v1.0-release.apk** من أصول هذا الإصدار.
-
-            ### 🌟 مميزات الإصدار
-            1. الديوان الشعري الكامل.
-            2. التلاوة الصوتية التفاعلية.
-            3. مشغل صوتي مصغر.
-            4. البحث والانتقال برقم الصفحة.
-            5. المفضلة والعلامات ودفتر الخواطر عبر Room Database.
-            6. تخصيص واجهة القراءة وحجم الخط.
           files: output_apk/Halawat-AlSheir-v1.0-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
