@@ -31,7 +31,11 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            // CI signs the unsigned release APK with Android's apksigner so
+            // keystore passwords containing non-ASCII characters are supported.
+            if (System.getenv("MANUAL_APKSIGN") != "true") {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
