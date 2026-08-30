@@ -61,49 +61,72 @@ jobs:
           test -s "$apk"
           ls -lh "$apk"
 
-      - name: Sign Release APK with apksigner
+      - name: Sign Release APK with OpenSSL + apksigner
         env:
           CM_KEYSTORE_PASSWORD: ${{ secrets.CM_KEYSTORE_PASSWORD }}
-          CM_KEY_ALIAS: ${{ secrets.CM_KEY_ALIAS }}
-          CM_KEY_PASSWORD: ${{ secrets.CM_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           test -n "$CM_KEYSTORE_PASSWORD"
-          test -n "$CM_KEY_ALIAS"
-          test -n "$CM_KEY_PASSWORD"
 
           unsigned="app/build/outputs/apk/release/app-release-unsigned.apk"
           signed="app/build/outputs/apk/release/app-release.apk"
           apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
           test -x "$apksigner"
 
-          # Gradle/JDK can reject non-ASCII PKCS12 passwords. Android's
-          # apksigner explicitly supports non-ASCII password encodings.
-          if ! "$apksigner" sign \
-            --ks my-upload-key.jks \
-            --ks-type PKCS12 \
-            --ks-key-alias "$CM_KEY_ALIAS" \
-            --ks-pass env:CM_KEYSTORE_PASSWORD \
-            --key-pass env:CM_KEY_PASSWORD \
-            --pass-encoding UTF-8 \
-            --out "$signed" \
-            "$unsigned"; then
-            echo "PKCS12 signing failed; retrying as JKS with UTF-8 password encoding."
-            rm -f "$signed"
-            "$apksigner" sign \
-              --ks my-upload-key.jks \
-              --ks-type JKS \
-              --ks-key-alias "$CM_KEY_ALIAS" \
-              --ks-pass env:CM_KEYSTORE_PASSWORD \
-              --key-pass env:CM_KEY_PASSWORD \
-              --pass-encoding UTF-8 \
-              --out "$signed" \
-              "$unsigned"
+          # The keystore is PKCS#12 and its password contains non-ASCII
+          # characters. Java's PKCS12KeyStore rejects that password. OpenSSL
+          # can read PKCS#12 passwords as UTF-8/BMPString, so extract the
+          # signing key/certificate and then use Android's apksigner.
+          rm -f signer-key.pem signer-key.pk8 signer-cert.pem
+          if ! openssl pkcs12 \
+            -in my-upload-key.jks \
+            -nocerts -nodes \
+            -passin env:CM_KEYSTORE_PASSWORD \
+            -out signer-key.pem; then
+            echo "Standard PKCS#12 decoding failed; retrying with OpenSSL legacy algorithms."
+            openssl pkcs12 -legacy \
+              -in my-upload-key.jks \
+              -nocerts -nodes \
+              -passin env:CM_KEYSTORE_PASSWORD \
+              -out signer-key.pem
           fi
+
+          if ! openssl pkcs12 \
+            -in my-upload-key.jks \
+            -clcerts -nokeys \
+            -passin env:CM_KEYSTORE_PASSWORD \
+            -out signer-cert.pem; then
+            rm -f signer-cert.pem
+            openssl pkcs12 -legacy \
+              -in my-upload-key.jks \
+              -clcerts -nokeys \
+              -passin env:CM_KEYSTORE_PASSWORD \
+              -out signer-cert.pem
+          fi
+
+          openssl pkcs8 \
+            -topk8 \
+            -inform PEM \
+            -outform DER \
+            -in signer-key.pem \
+            -out signer-key.pk8 \
+            -nocrypt
+
+          test -s signer-key.pk8
+          test -s signer-cert.pem
+
+          "$apksigner" sign \
+            --key signer-key.pk8 \
+            --cert signer-cert.pem \
+            --out "$signed" \
+            "$unsigned"
 
           test -s "$signed"
           "$apksigner" verify --verbose --print-certs "$signed"
           ls -lh "$signed"
+
+          # Remove extracted private key material from the workspace.
+          rm -f signer-key.pem signer-key.pk8 signer-cert.pem my-upload-key.jks
 
       - name: Package APK
         run: |
