@@ -35,73 +35,67 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
+          set -euo pipefail
           echo "Preparing environment configuration..."
-          # Configure .env
+
           if [ -n "$GEMINI_API_KEY" ]; then
-            echo "GEMINI_API_KEY=$GEMINI_API_KEY" > .env
+            printf 'GEMINI_API_KEY=%s\n' "$GEMINI_API_KEY" > .env
             echo "Successfully configured .env with GEMINI_API_KEY."
           elif [ -f .env.example ]; then
             cp .env.example .env
             echo "Copied .env.example to .env."
           fi
 
-          # Decode release keystore if provided
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
-            echo "Successfully decoded signing keystore (my-upload-key.jks)."
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "ERROR: KEYSTORE_BASE64 secret is required for a real signed release APK."
+            exit 1
           fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > my-upload-key.jks
+          test -s my-upload-key.jks
+          echo "Successfully decoded signing keystore."
 
-          # Ensure gradlew has execution rights
-          chmod +x gradlew || true
+          chmod +x gradlew
 
-      - name: Build Android APK
+      - name: Build Signed Release APK
         env:
           CM_KEYSTORE_PASSWORD: ${{ secrets.CM_KEYSTORE_PASSWORD }}
           CM_KEY_ALIAS: ${{ secrets.CM_KEY_ALIAS }}
           CM_KEY_PASSWORD: ${{ secrets.CM_KEY_PASSWORD }}
-          STORE_PASSWORD: ${{ secrets.CM_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.CM_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.CM_KEY_PASSWORD }}
           KEYSTORE_PATH: my-upload-key.jks
         run: |
-          echo "Starting Gradle compilation..."
-          # Check if Keystore exists and credentials are provided
-          if [ -f "my-upload-key.jks" ] && [ -n "$CM_KEYSTORE_PASSWORD" ]; then
-            echo "Building signed Release APK..."
-            gradle assembleRelease --stacktrace || gradle assembleDebug --stacktrace
-          else
-            echo "Building Debug APK..."
-            gradle assembleDebug --stacktrace
-          fi
+          set -euo pipefail
+          test -n "$CM_KEYSTORE_PASSWORD"
+          test -n "$CM_KEY_ALIAS"
+          test -n "$CM_KEY_PASSWORD"
+          echo "Building the real signed Release APK..."
+          ./gradlew --no-daemon clean assembleRelease --stacktrace
 
-      - name: Collect and Package APKs
+      - name: Verify Release APK
         run: |
-          mkdir -p output_apk
-          echo "Searching for built APK artifacts..."
-          find app/build/outputs/apk/ -type f -name "*.apk" -exec cp {} output_apk/ \;
-          
-          # Rename for clean distribution naming
-          cd output_apk
-          for f in *release*.apk; do
-            [ -f "$f" ] && mv "$f" "Halawat-AlSheir-v1.0-release.apk" && break
-          done
-          for f in *debug*.apk; do
-            [ -f "$f" ] && mv "$f" "Halawat-AlSheir-v1.0-debug.apk" && break
-          done
-          cd ..
-          
-          echo "Found APK files:"
-          ls -la output_apk/
+          set -euo pipefail
+          apk="app/build/outputs/apk/release/app-release.apk"
+          test -s "$apk"
+          echo "Verified Release APK: $apk"
+          ls -lh "$apk"
 
-      - name: Upload APKs to Artifacts
+      - name: Package APK
+        run: |
+          set -euo pipefail
+          mkdir -p output_apk
+          cp app/build/outputs/apk/release/app-release.apk output_apk/Halawat-AlSheir-v1.0-release.apk
+          test -s output_apk/Halawat-AlSheir-v1.0-release.apk
+          ls -lh output_apk/Halawat-AlSheir-v1.0-release.apk
+
+      - name: Upload Signed APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Halawat-AlSheir-Android15-APK
-          path: output_apk/*.apk
+          path: output_apk/Halawat-AlSheir-v1.0-release.apk
+          if-no-files-found: error
           retention-days: 30
 
       - name: Publish GitHub Release with APK
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.0-build${{ github.run_number }}
@@ -109,24 +103,19 @@ jobs:
           body: |
             ## ديوان «وللشعر حلاوة كحلاوة السكر» 📖✨
             **للمؤلف والشاعر: د. مالك عبدالرحمن الرميمة**
-            
-            تم بناء حزمة التثبيت الرسمية الموقعة (APK) بنجاح وجاهزة للتثبيت المباشر على جميع هواتف وأجهزة الأندرويد، ومتوافقة تماماً مع نظام **Android 15 (SNK 35)**.
-            
-            ---
-            
-            ### 📥 رابط تحميل التطبيق المباشر (APK):
-            - قم بتحميل ملف الـ APK المرفق بالأسفل باسم **`Halawat-AlSheir-v1.0-release.apk`** (أو `Halawat-AlSheir-v1.0-debug.apk`).
-            
-            ---
-            
-            ### 🌟 أهم مميزات هذا الإصدار:
-            1. **الديوان الشعري الكامل (190 صفحة):** 154 قصيدة متكاملة محققة مع تقسيم شطري دقيق (صدر وعجز).
-            2. **التلاوة الصوتية التفاعلية:** تلاوة واستماع نقي لكل قصيدة ولكل بيت بشكل منفصل مع تظليل البيت المقروء لحظياً.
-            3. **مشغل صوتي مصغر عائم:** لمتابعة الاستماع والتحكم بالسرعة أثناء تصفح باقي الأبواب والقصائد.
-            4. **البحث السريع والانتقال برقم الصفحة:** بحث في النصوص والأبيات مع الانتقال المباشر لأي صفحة من 1 إلى 190.
-            5. **المفضلة والعلامات ودفتر الخواطر:** حفظ القصائد والملاحظات محلياً بأمان عبر Room Database.
-            6. **تخصيص كامل للقراءة:** 4 سمات تراثية وحديثة (الورقي، الزمردي، الليلي، والوردي) والتحكم في حجم الخط.
-          files: output_apk/*.apk
+
+            تم بناء حزمة التثبيت الرسمية الموقعة (APK) من مصدر المشروع نفسه.
+
+            ### 📥 تحميل التطبيق
+            حمّل الملف **Halawat-AlSheir-v1.0-release.apk** من أصول هذا الإصدار.
+
+            ### 🌟 مميزات الإصدار
+            1. الديوان الشعري الكامل.
+            2. التلاوة الصوتية التفاعلية.
+            3. مشغل صوتي مصغر.
+            4. البحث والانتقال برقم الصفحة.
+            5. المفضلة والعلامات ودفتر الخواطر عبر Room Database.
+            6. تخصيص واجهة القراءة وحجم الخط.
+          files: output_apk/Halawat-AlSheir-v1.0-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
