@@ -114,9 +114,6 @@ jobs:
             return 1
           }
 
-          # Try the configured keystore password first. If the repository
-          # variables were accidentally swapped, also try the key password or
-          # a generic KEYSTORE_PASSWORD secret without printing any secret.
           signer_source=""
           for candidate in CM_KEYSTORE_PASSWORD CM_KEY_PASSWORD KEYSTORE_PASSWORD; do
             if extract_signer "$candidate"; then
