@@ -64,45 +64,74 @@ jobs:
       - name: Sign Release APK with OpenSSL + apksigner
         env:
           CM_KEYSTORE_PASSWORD: ${{ secrets.CM_KEYSTORE_PASSWORD }}
+          CM_KEY_PASSWORD: ${{ secrets.CM_KEY_PASSWORD }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
-          test -n "$CM_KEYSTORE_PASSWORD"
-
           unsigned="app/build/outputs/apk/release/app-release-unsigned.apk"
           signed="app/build/outputs/apk/release/app-release.apk"
           apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
           test -x "$apksigner"
 
-          # The keystore is PKCS#12 and its password contains non-ASCII
-          # characters. Java's PKCS12KeyStore rejects that password. OpenSSL
-          # can read PKCS#12 passwords as UTF-8/BMPString, so extract the
-          # signing key/certificate and then use Android's apksigner.
           rm -f signer-key.pem signer-key.pk8 signer-cert.pem
-          if ! openssl pkcs12 \
-            -in my-upload-key.jks \
-            -nocerts -nodes \
-            -passin env:CM_KEYSTORE_PASSWORD \
-            -out signer-key.pem; then
-            echo "Standard PKCS#12 decoding failed; retrying with OpenSSL legacy algorithms."
-            openssl pkcs12 -legacy \
+
+          extract_signer() {
+            local pass_var="$1"
+            local pass_value="${!pass_var:-}"
+            if [ -z "$pass_value" ]; then
+              return 1
+            fi
+
+            rm -f signer-key.pem signer-cert.pem
+            if openssl pkcs12 \
               -in my-upload-key.jks \
               -nocerts -nodes \
-              -passin env:CM_KEYSTORE_PASSWORD \
-              -out signer-key.pem
-          fi
-
-          if ! openssl pkcs12 \
-            -in my-upload-key.jks \
-            -clcerts -nokeys \
-            -passin env:CM_KEYSTORE_PASSWORD \
-            -out signer-cert.pem; then
-            rm -f signer-cert.pem
-            openssl pkcs12 -legacy \
+              -passin "env:$pass_var" \
+              -out signer-key.pem >/dev/null 2>&1 && \
+              openssl pkcs12 \
               -in my-upload-key.jks \
               -clcerts -nokeys \
-              -passin env:CM_KEYSTORE_PASSWORD \
-              -out signer-cert.pem
+              -passin "env:$pass_var" \
+              -out signer-cert.pem >/dev/null 2>&1; then
+              return 0
+            fi
+
+            rm -f signer-key.pem signer-cert.pem
+            if openssl pkcs12 -legacy \
+              -in my-upload-key.jks \
+              -nocerts -nodes \
+              -passin "env:$pass_var" \
+              -out signer-key.pem >/dev/null 2>&1 && \
+              openssl pkcs12 -legacy \
+              -in my-upload-key.jks \
+              -clcerts -nokeys \
+              -passin "env:$pass_var" \
+              -out signer-cert.pem >/dev/null 2>&1; then
+              return 0
+            fi
+
+            rm -f signer-key.pem signer-cert.pem
+            return 1
+          }
+
+          # Try the configured keystore password first. If the repository
+          # variables were accidentally swapped, also try the key password or
+          # a generic KEYSTORE_PASSWORD secret without printing any secret.
+          signer_source=""
+          for candidate in CM_KEYSTORE_PASSWORD CM_KEY_PASSWORD KEYSTORE_PASSWORD; do
+            if extract_signer "$candidate"; then
+              signer_source="$candidate"
+              break
+            fi
+          done
+
+          if [ -z "$signer_source" ]; then
+            echo "ERROR: none of the configured keystore-password secrets can open KEYSTORE_BASE64."
+            echo "Update CM_KEYSTORE_PASSWORD (or KEYSTORE_PASSWORD) to the exact password used when the keystore was created, then rerun the workflow."
+            exit 1
           fi
+
+          echo "Keystore opened successfully using the configured secret source: $signer_source"
 
           openssl pkcs8 \
             -topk8 \
@@ -125,7 +154,6 @@ jobs:
           "$apksigner" verify --verbose --print-certs "$signed"
           ls -lh "$signed"
 
-          # Remove extracted private key material from the workspace.
           rm -f signer-key.pem signer-key.pk8 signer-cert.pem my-upload-key.jks
 
       - name: Package APK
