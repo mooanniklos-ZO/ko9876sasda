@@ -51,25 +51,59 @@ jobs:
           test -s my-upload-key.jks
           chmod +x gradlew
 
-      - name: Build Signed Release APK
+      - name: Build Unsigned Release APK
+        env:
+          MANUAL_APKSIGN: 'true'
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon clean assembleRelease --stacktrace
+          apk="app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -s "$apk"
+          ls -lh "$apk"
+
+      - name: Sign Release APK with apksigner
         env:
           CM_KEYSTORE_PASSWORD: ${{ secrets.CM_KEYSTORE_PASSWORD }}
           CM_KEY_ALIAS: ${{ secrets.CM_KEY_ALIAS }}
           CM_KEY_PASSWORD: ${{ secrets.CM_KEY_PASSWORD }}
-          KEYSTORE_PATH: my-upload-key.jks
         run: |
           set -euo pipefail
           test -n "$CM_KEYSTORE_PASSWORD"
           test -n "$CM_KEY_ALIAS"
           test -n "$CM_KEY_PASSWORD"
-          ./gradlew --no-daemon clean assembleRelease --stacktrace
 
-      - name: Verify Release APK
-        run: |
-          set -euo pipefail
-          apk="app/build/outputs/apk/release/app-release.apk"
-          test -s "$apk"
-          ls -lh "$apk"
+          unsigned="app/build/outputs/apk/release/app-release-unsigned.apk"
+          signed="app/build/outputs/apk/release/app-release.apk"
+          apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          test -x "$apksigner"
+
+          # Gradle/JDK can reject non-ASCII PKCS12 passwords. Android's
+          # apksigner explicitly supports non-ASCII password encodings.
+          if ! "$apksigner" sign \
+            --ks my-upload-key.jks \
+            --ks-type PKCS12 \
+            --ks-key-alias "$CM_KEY_ALIAS" \
+            --ks-pass env:CM_KEYSTORE_PASSWORD \
+            --key-pass env:CM_KEY_PASSWORD \
+            --pass-encoding UTF-8 \
+            --out "$signed" \
+            "$unsigned"; then
+            echo "PKCS12 signing failed; retrying as JKS with UTF-8 password encoding."
+            rm -f "$signed"
+            "$apksigner" sign \
+              --ks my-upload-key.jks \
+              --ks-type JKS \
+              --ks-key-alias "$CM_KEY_ALIAS" \
+              --ks-pass env:CM_KEYSTORE_PASSWORD \
+              --key-pass env:CM_KEY_PASSWORD \
+              --pass-encoding UTF-8 \
+              --out "$signed" \
+              "$unsigned"
+          fi
+
+          test -s "$signed"
+          "$apksigner" verify --verbose --print-certs "$signed"
+          ls -lh "$signed"
 
       - name: Package APK
         run: |
