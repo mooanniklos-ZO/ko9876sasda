@@ -61,89 +61,81 @@ jobs:
           test -s "$apk"
           ls -lh "$apk"
 
-      - name: Sign Release APK with OpenSSL + apksigner
+      - name: Sign Release APK with apksigner
         env:
           CM_KEYSTORE_PASSWORD: ${{ secrets.CM_KEYSTORE_PASSWORD }}
           CM_KEY_PASSWORD: ${{ secrets.CM_KEY_PASSWORD }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          CM_KEY_ALIAS: ${{ secrets.CM_KEY_ALIAS }}
         run: |
           set -euo pipefail
           unsigned="app/build/outputs/apk/release/app-release-unsigned.apk"
           signed="app/build/outputs/apk/release/app-release.apk"
           apksigner="$ANDROID_HOME/build-tools/36.0.0/apksigner"
           test -x "$apksigner"
+          test -s my-upload-key.jks
 
-          rm -f signer-key.pem signer-key.pk8 signer-cert.pem
+          if [ -z "${CM_KEY_ALIAS:-}" ]; then
+            echo "ERROR: CM_KEY_ALIAS is required for the signed release APK."
+            exit 1
+          fi
 
-          extract_signer() {
-            local pass_var="$1"
-            local pass_value="${!pass_var:-}"
-            if [ -z "$pass_value" ]; then
-              return 1
+          # Android signing can use either a JKS or PKCS12 keystore directly.
+          # The previous workflow forced OpenSSL PKCS12 parsing, which fails
+          # when the supplied signing file is a normal JKS keystore.
+          store_pass=""
+          store_source=""
+          for candidate in CM_KEYSTORE_PASSWORD KEYSTORE_PASSWORD; do
+            value="${!candidate:-}"
+            if [ -z "$value" ]; then
+              continue
             fi
-
-            rm -f signer-key.pem signer-cert.pem
-            if openssl pkcs12 \
-              -in my-upload-key.jks \
-              -nocerts -nodes \
-              -passin "env:$pass_var" \
-              -out signer-key.pem >/dev/null 2>&1 && \
-              openssl pkcs12 \
-              -in my-upload-key.jks \
-              -clcerts -nokeys \
-              -passin "env:$pass_var" \
-              -out signer-cert.pem >/dev/null 2>&1; then
-              return 0
-            fi
-
-            rm -f signer-key.pem signer-cert.pem
-            if openssl pkcs12 -legacy \
-              -in my-upload-key.jks \
-              -nocerts -nodes \
-              -passin "env:$pass_var" \
-              -out signer-key.pem >/dev/null 2>&1 && \
-              openssl pkcs12 -legacy \
-              -in my-upload-key.jks \
-              -clcerts -nokeys \
-              -passin "env:$pass_var" \
-              -out signer-cert.pem >/dev/null 2>&1; then
-              return 0
-            fi
-
-            rm -f signer-key.pem signer-cert.pem
-            return 1
-          }
-
-          signer_source=""
-          for candidate in CM_KEYSTORE_PASSWORD CM_KEY_PASSWORD KEYSTORE_PASSWORD; do
-            if extract_signer "$candidate"; then
-              signer_source="$candidate"
+            if keytool -list -noprompt \
+              -keystore my-upload-key.jks \
+              -storepass "$value" \
+              -alias "$CM_KEY_ALIAS" >/dev/null 2>&1; then
+              store_pass="$value"
+              store_source="$candidate"
               break
             fi
           done
 
-          if [ -z "$signer_source" ]; then
-            echo "ERROR: none of the configured keystore-password secrets can open KEYSTORE_BASE64."
-            echo "Update CM_KEYSTORE_PASSWORD (or KEYSTORE_PASSWORD) to the exact password used when the keystore was created, then rerun the workflow."
+          if [ -z "$store_pass" ]; then
+            echo "ERROR: the configured keystore password cannot open the supplied KEYSTORE_BASE64 with CM_KEY_ALIAS."
+            echo "The keystore file, store password, or CM_KEY_ALIAS does not match."
             exit 1
           fi
 
-          echo "Keystore opened successfully using the configured secret source: $signer_source"
+          echo "Keystore and alias verified using $store_source."
 
-          openssl pkcs8 \
-            -topk8 \
-            -inform PEM \
-            -outform DER \
-            -in signer-key.pem \
-            -out signer-key.pk8 \
-            -nocrypt
-
-          test -s signer-key.pk8
-          test -s signer-cert.pem
+          key_pass="${CM_KEY_PASSWORD:-}"
+          if [ -n "$key_pass" ]; then
+            if ! keytool -list -noprompt \
+              -keystore my-upload-key.jks \
+              -storepass "$store_pass" \
+              -alias "$CM_KEY_ALIAS" \
+              -keypass "$key_pass" >/dev/null 2>&1; then
+              key_pass=""
+            fi
+          fi
+          if [ -z "$key_pass" ]; then
+            key_pass="$store_pass"
+            if ! keytool -list -noprompt \
+              -keystore my-upload-key.jks \
+              -storepass "$store_pass" \
+              -alias "$CM_KEY_ALIAS" \
+              -keypass "$key_pass" >/dev/null 2>&1; then
+              echo "ERROR: CM_KEY_PASSWORD does not match the private key, and the store password cannot be used as the key password."
+              exit 1
+            fi
+          fi
 
           "$apksigner" sign \
-            --key signer-key.pk8 \
-            --cert signer-cert.pem \
+            --ks my-upload-key.jks \
+            --ks-type JKS \
+            --ks-key-alias "$CM_KEY_ALIAS" \
+            --ks-pass "pass:$store_pass" \
+            --key-pass "pass:$key_pass" \
             --out "$signed" \
             "$unsigned"
 
@@ -151,7 +143,7 @@ jobs:
           "$apksigner" verify --verbose --print-certs "$signed"
           ls -lh "$signed"
 
-          rm -f signer-key.pem signer-key.pk8 signer-cert.pem my-upload-key.jks
+          rm -f my-upload-key.jks
 
       - name: Package APK
         run: |
